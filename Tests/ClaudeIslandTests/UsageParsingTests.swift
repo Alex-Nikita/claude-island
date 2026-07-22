@@ -99,6 +99,66 @@ final class UsageParsingTests: XCTestCase {
         XCTAssertEqual(usage.limits.first?.percentUsed, 100)
     }
 
+    // Enterprise credit-metered seat (rateLimitTier "default_claude_zero"):
+    // null windows, empty limits, real usage only in top-level spend /
+    // extra_usage. Exact shape from a live account report — the parser used
+    // to throw unrecognizedResponse for it.
+    private static let creditAccountJSON = """
+    {"five_hour":null,"seven_day":null,"limits":[],
+     "extra_usage":{"is_enabled":true,"monthly_limit":40000,"used_credits":27992.0,
+       "utilization":69.98,"currency":"USD","decimal_places":2,"disabled_reason":null},
+     "spend":{"used":{"amount_minor":27992,"currency":"USD","exponent":2},
+       "limit":{"amount_minor":40000,"currency":"USD","exponent":2},
+       "percent":70,"severity":"normal","enabled":true,"disabled_reason":null},
+     "member_dashboard_available":true}
+    """
+
+    func testCreditMeteredAccountParses() throws {
+        let usage = try parse(Self.creditAccountJSON)
+        XCTAssertEqual(usage.monthlyCredits?.used ?? 0, 279.92, accuracy: 0.001)
+        XCTAssertEqual(usage.monthlyCredits?.limit ?? 0, 400.00, accuracy: 0.001)
+        XCTAssertFalse(usage.isUnlimited)
+        let credit = usage.limits.first { $0.kind == "monthly_credits" }
+        XCTAssertEqual(credit?.label, "Monthly credits")
+        XCTAssertEqual(credit?.percentUsed ?? 0, 70, accuracy: 0.1)
+        XCTAssertEqual(credit?.severity, "normal")
+    }
+
+    func testCreditAccountHeadlinesInDetectedMode() throws {
+        let usage = try parse(Self.creditAccountJSON)
+        let query = UsageQuery(source: .officialAPI, window: .fiveHour, costMultiplier: 1,
+                               costBudget: 0, tokenBudget: 0, weightCacheTokens: true,
+                               mode: .detected)
+        let snapshot = UsageEngine().officialSnapshot(usage: usage, query: query)
+        XCTAssertEqual(snapshot?.windowLabel, "Monthly credits")
+        XCTAssertEqual(snapshot?.percentLeft ?? 0, 30, accuracy: 0.1)
+        XCTAssertEqual(snapshot?.usedDisplay, Format.dollars(279.92) + " used")
+        XCTAssertEqual(snapshot?.budgetDisplay, Format.dollars(400) + " credits")
+        XCTAssertEqual(snapshot?.dollarsUsed ?? 0, 279.92, accuracy: 0.001)
+    }
+
+    func testExtraUsageFallbackWhenSpendMissing() throws {
+        let usage = try parse("""
+        {"five_hour":null,"seven_day":null,"limits":[],
+         "extra_usage":{"is_enabled":true,"monthly_limit":40000,"used_credits":27992.0,
+           "utilization":69.98,"currency":"USD","decimal_places":2,"disabled_reason":null}}
+        """)
+        XCTAssertEqual(usage.monthlyCredits?.used ?? 0, 279.92, accuracy: 0.001)
+        XCTAssertEqual(usage.monthlyCredits?.limit ?? 0, 400, accuracy: 0.001)
+        XCTAssertEqual(usage.limits.first?.percentUsed ?? 0, 69.98, accuracy: 0.01)
+    }
+
+    func testDisabledCreditMeteringParsesAsUncapped() throws {
+        let usage = try parse("""
+        {"five_hour":null,"seven_day":null,"limits":[],
+         "spend":{"used":{"amount_minor":0,"currency":"USD","exponent":2},
+           "limit":null,"percent":0,"severity":"normal","enabled":false,
+           "disabled_reason":"billing_paused"}}
+        """)
+        XCTAssertNil(usage.monthlyCredits, "disabled metering carries no cap")
+        XCTAssertTrue(usage.isUnlimited, "present-but-disabled metering is not an error")
+    }
+
     func testEpochMillisecondResetDates() throws {
         let usage = try parse("""
         {"five_hour":{"utilization":10,"resets_at":1784646000000}}

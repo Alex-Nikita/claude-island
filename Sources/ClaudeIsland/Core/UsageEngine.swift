@@ -65,10 +65,15 @@ final class UsageEngine {
         // longer reports) falls back to tightest rather than failing.
         let chosen = query.preferredLimitID.flatMap { id in usage.limits.first { $0.id == id } }
         if query.mode == .detected, let binding = chosen ?? Self.bindingLimit(usage.limits) {
+            // Credit-metered accounts: the synthesized monthly-credits limit
+            // carries real dollars — show those instead of local estimates.
+            let credits = binding.kind == "monthly_credits" ? usage.monthlyCredits : nil
             return UsageSnapshot(
                 percentLeft: min(max(100 - binding.percentUsed, 0), 100),
-                usedDisplay: "\(Int(binding.percentUsed.rounded()))% used",
-                budgetDisplay: "official limit",
+                usedDisplay: credits.map { Format.dollars($0.used) + " used" }
+                    ?? "\(Int(binding.percentUsed.rounded()))% used",
+                budgetDisplay: credits?.limit.map { Format.dollars($0) + " credits" }
+                    ?? "official limit",
                 windowLabel: binding.label,
                 sourceLabel: chosen != nil
                     ? "Official limit · pinned"
@@ -76,8 +81,8 @@ final class UsageEngine {
                 resetsAt: binding.resetsAt,
                 updatedAt: Date(),
                 officialLimits: usage.limits,
-                dollarsUsed: estimate?.used,
-                dollarsBudget: estimate?.budget
+                dollarsUsed: credits?.used ?? estimate?.used,
+                dollarsBudget: credits?.limit ?? estimate?.budget
             )
         }
         let utilization: Double?
@@ -128,6 +133,23 @@ final class UsageEngine {
                 updatedAt: Date(),
                 officialLimits: usage.limits,
                 dollarsUsed: pickedDollars.used,
+                dollarsBudget: limit
+            )
+        }
+        // Credit-metered accounts outside detected mode: the monthly cap is
+        // the only real limit the endpoint reports — headline it rather than
+        // pretending the fetch failed.
+        if let credits = usage.monthlyCredits, let limit = credits.limit, limit > 0 {
+            return UsageSnapshot(
+                percentLeft: min(max(100 * (1 - credits.used / limit), 0), 100),
+                usedDisplay: Format.dollars(credits.used),
+                budgetDisplay: Format.dollars(limit) + " credits",
+                windowLabel: "Monthly credits",
+                sourceLabel: "Official API · credit limit",
+                resetsAt: nil,
+                updatedAt: Date(),
+                officialLimits: usage.limits,
+                dollarsUsed: credits.used,
                 dollarsBudget: limit
             )
         }

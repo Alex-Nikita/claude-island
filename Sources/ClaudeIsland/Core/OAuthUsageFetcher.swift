@@ -17,11 +17,16 @@ struct OfficialUsage {
     var limits: [OfficialLimit] = []
     var fiveHourDollars: DollarUsage?
     var sevenDayDollars: DollarUsage?
+    // Enterprise credit-metered seats: the monthly spend cap carried by the
+    // top-level `spend`/`extra_usage` objects (these accounts report null
+    // windows and an empty limits array).
+    var monthlyCredits: DollarUsage?
     // True when the endpoint answered but reported no limit of any kind —
     // an account without usage caps, not a failure.
     var isUnlimited: Bool {
         limits.isEmpty && fiveHourUtilization == nil && sevenDayUtilization == nil
             && fiveHourDollars?.limit == nil && sevenDayDollars?.limit == nil
+            && monthlyCredits?.limit == nil
     }
 }
 
@@ -262,16 +267,32 @@ actor OAuthUsageFetcher {
         }
         let five = window(in: root, candidates: ["five_hour", "fiveHour", "5h", "five_hour_usage"])
         let seven = window(in: root, candidates: ["seven_day", "sevenDay", "7d", "seven_day_usage"])
-        let limits = parseLimits(root["limits"])
+        var limits = parseLimits(root["limits"])
         let fiveDollars = dollarUsage(in: root, key: "five_hour")
         let sevenDollars = dollarUsage(in: root, key: "seven_day")
+        let credits = monthlyCredits(in: root)
+        if let credits {
+            // Surface the credit cap as a first-class limit so detected mode
+            // headlines it exactly like session/weekly windows do.
+            limits.append(OfficialLimit(
+                kind: "monthly_credits",
+                label: "Monthly credits",
+                percentUsed: min(max(credits.percent, 0), 100),
+                severity: credits.severity,
+                resetsAt: nil,
+                isActive: false
+            ))
+        }
         // A response is unrecognizable only if it carries NOTHING — no
         // percentages, no dollar metering, no limits array, and none of the
-        // window keys at all. An account without caps legitimately returns
-        // nulls everywhere; that parses as "unlimited", not an error.
+        // window or credit objects at all. An account without caps
+        // legitimately returns nulls everywhere, and a credit account with
+        // metering disabled looks similar; both parse as "unlimited", not
+        // as an error.
         let sawWindowObjects = root["five_hour"] is [String: Any] || root["seven_day"] is [String: Any]
+        let sawCreditObjects = root["spend"] is [String: Any] || root["extra_usage"] is [String: Any]
         guard five.utilization != nil || seven.utilization != nil || !limits.isEmpty
-            || fiveDollars != nil || sevenDollars != nil || sawWindowObjects
+            || fiveDollars != nil || sevenDollars != nil || sawWindowObjects || sawCreditObjects
         else {
             throw FetchError.unrecognizedResponse
         }
@@ -282,8 +303,49 @@ actor OAuthUsageFetcher {
             sevenDayResetsAt: seven.resetsAt,
             limits: limits,
             fiveHourDollars: fiveDollars,
-            sevenDayDollars: sevenDollars
+            sevenDayDollars: sevenDollars,
+            monthlyCredits: credits?.dollars
         )
+    }
+
+    // Enterprise credit-metered seats (e.g. rateLimitTier
+    // "default_claude_zero") report null windows and an empty limits array;
+    // the real usage lives in top-level `spend` (minor currency units with an
+    // exponent), mirrored by `extra_usage` (credits scaled by
+    // decimal_places). Metering that is disabled (enabled false or a
+    // disabled_reason set) parses as absent, not as an error — the account
+    // still recognizes, it just has no active cap.
+    private static func monthlyCredits(in root: [String: Any])
+        -> (dollars: DollarUsage, percent: Double, severity: String)? {
+        func active(_ object: [String: Any], enabledKey: String) -> Bool {
+            if (object[enabledKey] as? Bool) == false { return false }
+            let reason = object["disabled_reason"]
+            return reason == nil || reason is NSNull
+        }
+        func minorAmount(_ value: Any?) -> Double? {
+            guard let object = value as? [String: Any],
+                  let minor = number(object["amount_minor"]) else { return nil }
+            return minor / pow(10, number(object["exponent"]) ?? 2)
+        }
+        if let spend = root["spend"] as? [String: Any], active(spend, enabledKey: "enabled"),
+           let used = minorAmount(spend["used"]) {
+            let limit = minorAmount(spend["limit"])
+            let percent = number(spend["percent"])
+                ?? limit.flatMap { $0 > 0 ? used / $0 * 100 : nil } ?? 0
+            return (DollarUsage(used: used, limit: limit, resetsAt: nil),
+                    percent, (spend["severity"] as? String) ?? "normal")
+        }
+        if let extra = root["extra_usage"] as? [String: Any],
+           active(extra, enabledKey: "is_enabled"),
+           let rawUsed = number(extra["used_credits"]) {
+            let scale = pow(10, number(extra["decimal_places"]) ?? 2)
+            let used = rawUsed / scale
+            let limit = number(extra["monthly_limit"]).map { $0 / scale }
+            let percent = number(extra["utilization"])
+                ?? limit.flatMap { $0 > 0 ? used / $0 * 100 : nil } ?? 0
+            return (DollarUsage(used: used, limit: limit, resetsAt: nil), percent, "normal")
+        }
+        return nil
     }
 
     private static func dollarUsage(in root: [String: Any], key: String) -> DollarUsage? {
