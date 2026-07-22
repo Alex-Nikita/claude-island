@@ -64,6 +64,7 @@ enum HookCapture {
     # Installed by Claude Island (Settings > Precise prompt capture).
     # Usage: capture.sh              append full stdin JSON
     #        capture.sh marker <EV>  append a tiny resolution record
+    umask 077
     DIR="$HOME/.claude/island/events"
     mkdir -p "$DIR" 2>/dev/null
     IN=$(cat)
@@ -326,6 +327,7 @@ enum HookCapture {
     #!/bin/sh
     # Installed by Claude Island: saves Claude Code's status payload (incl.
     # its own context accounting) per session, and renders the status line.
+    umask 077
     DIR="$HOME/.claude/island/status"
     mkdir -p "$DIR" 2>/dev/null
     IN=$(cat)
@@ -444,9 +446,10 @@ enum HookCapture {
         return pre.contains { containsCommand($0, commandMarker) }
     }
 
-    /// Writes the embedded scripts to ~/.claude/island/. Touches only our own
-    /// files — never settings.json — so it is safe to run on every launch.
-    static func writeScripts() throws {
+    /// Capture-side scripts (events + statusline) to ~/.claude/island/.
+    /// Touches only our own files — never settings.json — so it is safe to
+    /// run on every launch.
+    static func writeCaptureScripts() throws {
         let fm = FileManager.default
         // Owner-only: these dirs hold prompt content and typed answers.
         try fm.createDirectory(at: islandDir, withIntermediateDirectories: true,
@@ -460,27 +463,44 @@ enum HookCapture {
             try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
         }
         try script.write(to: scriptURL, atomically: true, encoding: .utf8)
-        try answerScript.write(to: answerScriptURL, atomically: true, encoding: .utf8)
-        try answerPython.write(to: answerPythonURL, atomically: true, encoding: .utf8)
         try statusScript.write(to: statusScriptURL, atomically: true, encoding: .utf8)
-        for path in [scriptURL.path, answerScriptURL.path, statusScriptURL.path] {
+        for path in [scriptURL.path, statusScriptURL.path] {
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
         }
     }
 
-    /// Hooks reference scripts on disk; the embedded copies evolve with the
-    /// app. Re-sync at launch so an upgraded app never runs stale scripts.
-    static func refreshScriptsIfInstalled() {
-        guard isInstalled else { return }
-        try? writeScripts()
+    /// The answerer's scripts only — installed by the separate
+    /// click-to-answer opt-in, never as a side effect of capture.
+    static func writeAnswerScripts() throws {
+        let fm = FileManager.default
+        try answerScript.write(to: answerScriptURL, atomically: true, encoding: .utf8)
+        try answerPython.write(to: answerPythonURL, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: answerScriptURL.path)
     }
 
-    static func install() throws {
+    static func writeScripts() throws {
+        try writeCaptureScripts()
+        try writeAnswerScripts()
+    }
+
+    /// Hooks reference scripts on disk; the embedded copies evolve with the
+    /// app. Re-sync at launch so an upgraded app never runs stale scripts —
+    /// each half only when its half is actually installed.
+    static func refreshScriptsIfInstalled() {
+        if isInstalled { try? writeCaptureScripts() }
+        if isClickToAnswerInstalled { try? writeAnswerScripts() }
+    }
+
+    /// Installs the read-only half: event capture + statusline. Powers the
+    /// Context page and exact-prompt display; never answers anything.
+    static func installCapture() throws {
         let fm = FileManager.default
-        try writeScripts()
+        try writeCaptureScripts()
 
         var settings = try readSettingsStrict()
-        if fm.fileExists(atPath: ClaudePaths.userSettings.path) {
+        // Preserve the pristine pre-island snapshot: back up only on the
+        // first install, never over a backup that predates our hooks.
+        if !isInstalled, fm.fileExists(atPath: ClaudePaths.userSettings.path) {
             try? fm.removeItem(at: settingsBackupURL)
             try? fm.copyItem(at: ClaudePaths.userSettings, to: settingsBackupURL)
         }
@@ -500,6 +520,19 @@ enum HookCapture {
             entries.append(entry)
             hooks[spec.event] = entries
         }
+        settings["hooks"] = hooks
+        try writeSettings(settings)
+    }
+
+    /// Installs the write half: the blocking permission answerer. Requires
+    /// capture (the island needs prompt content to render options, and the
+    /// answerer exits on capture-file movement), so it installs that too.
+    static func installAnswerer() throws {
+        try installCapture()
+        try writeAnswerScripts()
+
+        var settings = try readSettingsStrict()
+        var hooks = (settings["hooks"] as? [String: Any]) ?? [:]
         // The blocking answerer races the dialog; its own deadline (290s)
         // sits under this timeout so it always exits on its own terms. No
         // matcher: it answers every tool's permission dialog (the script
@@ -510,9 +543,31 @@ enum HookCapture {
                 "hooks": [["type": "command", "command": answerCommand, "timeout": 300]],
             ])
             hooks["PermissionRequest"] = permissionEntries
+            settings["hooks"] = hooks
+            try writeSettings(settings)
         }
-        settings["hooks"] = hooks
-        try writeSettings(settings)
+    }
+
+    /// Legacy combined install (capture + answerer).
+    static func install() throws {
+        try installAnswerer()
+    }
+
+    /// Removes only the answerer; capture and statusline stay.
+    static func uninstallAnswerer() throws {
+        var settings = try readSettingsStrict()
+        if var hooks = settings["hooks"] as? [String: Any] {
+            for event in hooks.keys {
+                guard var entries = hooks[event] as? [[String: Any]] else { continue }
+                entries.removeAll { containsCommand($0, answerMarker) }
+                hooks[event] = entries.isEmpty ? nil : entries
+            }
+            settings["hooks"] = hooks.isEmpty ? nil : hooks
+            try writeSettings(settings)
+        }
+        for url in [answerScriptURL, answerPythonURL] {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     static func uninstall() throws {

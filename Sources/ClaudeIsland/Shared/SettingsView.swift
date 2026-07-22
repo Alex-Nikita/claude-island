@@ -25,6 +25,8 @@ struct SettingsView: View {
     // on EVERY struct init (2s poll re-renders), and isInstalled does file IO.
     @State private var hookInstalled = false
     @State private var hookError: String?
+    @State private var answerInstalled = false
+    @State private var answerError: String?
 
     private static let budgetFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
@@ -534,12 +536,22 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Toggle("Precise prompt capture (Claude Code hook)", isOn: hookBinding)
-                Text(hookError ?? "Adds a hook to ~/.claude/settings.json so the island shows the exact question, plan, or permission Claude is waiting on. Running sessions pick it up automatically.")
+                Toggle("Session insights (Claude Code hook)", isOn: hookBinding)
+                Text(hookError ?? "Statusline + prompt capture: fills the Context page and shows the exact question, plan, or permission a session is waiting on. Read-only. Running sessions pick it up automatically.")
                     .font(.caption2)
                     .foregroundStyle(hookError == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
             }
-            .onAppear { hookInstalled = HookCapture.isInstalled }
+            .onAppear {
+                hookInstalled = HookCapture.isInstalled
+                answerInstalled = HookCapture.isClickToAnswerInstalled
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Toggle("Click-to-answer from the island", isOn: answerBinding)
+                    .disabled(!hookInstalled && !answerInstalled)
+                Text(answerError ?? "Answer questions and permission prompts by clicking the island — your click races the terminal dialog. On managed or enterprise seats, check your org's policy first (see SECURITY.md). Requires Session insights.")
+                    .font(.caption2)
+                    .foregroundStyle(answerError == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
+            }
             HStack {
                 Text("Refresh every")
                     .font(.caption)
@@ -569,8 +581,10 @@ struct SettingsView: View {
             set: { wanted in
                 do {
                     if wanted {
-                        try HookCapture.install()
+                        try HookCapture.installCapture()
                     } else {
+                        // Turning insights off removes everything — the
+                        // answerer can't run without its capture half.
                         try HookCapture.uninstall()
                     }
                     hookError = nil
@@ -578,6 +592,27 @@ struct SettingsView: View {
                     hookError = "Couldn't update ~/.claude/settings.json: \(error.localizedDescription)"
                 }
                 hookInstalled = HookCapture.isInstalled
+                answerInstalled = HookCapture.isClickToAnswerInstalled
+            }
+        )
+    }
+
+    private var answerBinding: Binding<Bool> {
+        Binding(
+            get: { answerInstalled },
+            set: { wanted in
+                do {
+                    if wanted {
+                        try HookCapture.installAnswerer()
+                    } else {
+                        try HookCapture.uninstallAnswerer()
+                    }
+                    answerError = nil
+                } catch {
+                    answerError = "Couldn't update ~/.claude/settings.json: \(error.localizedDescription)"
+                }
+                hookInstalled = HookCapture.isInstalled
+                answerInstalled = HookCapture.isClickToAnswerInstalled
             }
         )
     }

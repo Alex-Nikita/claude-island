@@ -98,7 +98,9 @@ Your click races the terminal dialog — whichever side answers first wins, and 
 other side resolves cleanly. Auto-expand and collapse-on-click-away are both
 toggleable in Settings if you'd rather summon the island yourself.
 
-This works through **Precise prompt capture**, an opt-in toggle that installs a small
+This works through two separate opt-in toggles — **Session insights** (read-only
+statusline + prompt capture) and **Click-to-answer** (the answering half) — which
+install a small
 set of Claude Code hooks (running sessions pick them up without a restart — and
 [here's exactly what it touches](#privacy-honestly)).
 
@@ -174,7 +176,7 @@ Features degrade gracefully with older Claude Code versions rather than breaking
 - **Live session status** needs Claude Code's session registry
   (`~/.claude/sessions/`) — without it the meter still works, you just lose the
   status animations and session explorer.
-- **Precise prompt capture & click-to-answer** rely on 2.1-era hooks
+- **Session insights & click-to-answer** rely on 2.1-era hooks
   (`PermissionRequest`); on older versions these toggles simply have no effect.
   Click-to-answer also needs `python3` on PATH (it ships with the Xcode command
   line tools) and quietly stands down without it.
@@ -196,12 +198,21 @@ Everything stays on your Mac. In detail:
 - **What it never does:** analytics, crash reporting, update pings, third-party
   servers, third-party code. The dependency list is empty by design.
 
-**Precise prompt capture**, when you opt in, installs helper scripts under
-`~/.claude/island/` and adds hook entries to `~/.claude/settings.json`. Before
-touching that file it backs it up to `~/.claude/island/settings-backup.json`, it
-refuses to modify a settings file it can't parse (so a broken file is never
-clobbered), and toggling the feature off removes every hook and script cleanly.
-Captured prompt events live in local per-session files that are pruned after a week.
+**The hooks are two separate opt-ins.** **Session insights** installs read-only
+capture scripts under `~/.claude/island/` — the statusline and event capture that
+fill the Context page and show exact prompts; it records, and never answers.
+**Click-to-answer** separately installs the permission answerer that lets an island
+click race the terminal dialog. Before touching `~/.claude/settings.json` the app
+backs it up to `~/.claude/island/settings-backup.json`, refuses to modify a settings
+file it can't parse (a broken file is never clobbered), and toggling off removes
+every hook and script cleanly. Captured events are owner-only on disk and pruned
+after a week.
+
+**On a managed or enterprise seat?** Your org may run permission policies precisely
+so a human reviews each sensitive tool call — check policy before enabling
+click-to-answer (everything else works fully without it). The complete threat
+model, including what a local attacker could and couldn't gain, lives in
+[SECURITY.md](SECURITY.md).
 
 ## Debug flags
 
