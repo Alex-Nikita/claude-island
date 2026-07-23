@@ -85,6 +85,7 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                updateRow
                 Text("A menu-bar / notch meter for your Claude usage, sessions, and capabilities.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -109,10 +110,21 @@ struct SettingsView: View {
                 Text("Licensed under \(AppInfo.license). Not affiliated with Anthropic.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                Divider()
+                Toggle("Check for updates automatically", isOn: $settings.checkForUpdates)
+                    .font(.caption)
+                Text("Checks github.com for new releases on launch — sends nothing about you.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             .padding(4)
         } label: {
-            sectionLabel("About")
+            HStack(spacing: 5) {
+                sectionLabel("About")
+                if appState.hasUpdate {
+                    Circle().fill(Color.updateAccent).frame(width: 7, height: 7)
+                }
+            }
         }
     }
 
@@ -211,6 +223,49 @@ struct SettingsView: View {
             .font(.caption)
             .fontWeight(.semibold)
             .foregroundStyle(.secondary)
+    }
+
+    // About-page update indicator: an accented card with the changelog and a
+    // download link when a newer release exists, a quiet "latest" line
+    // otherwise, and nothing at all when the check hasn't landed (or is off).
+    @ViewBuilder
+    private var updateRow: some View {
+        switch appState.updateStatus {
+        case .available(let info):
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .foregroundStyle(Color.updateAccent)
+                    Text("Update available — \(info.version)")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    if let url = URL(string: info.url) {
+                        Link("Download", destination: url)
+                            .font(.caption)
+                    }
+                }
+                DisclosureGroup("What's changed") {
+                    ScrollView {
+                        Text(info.notes.isEmpty ? "See the release page for details." : info.notes)
+                            .font(.caption2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .padding(.top, 2)
+                    }
+                    .frame(maxHeight: 150)
+                }
+                .font(.caption)
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.updateAccent.opacity(0.12)))
+        case .upToDate:
+            Label("You're on the latest version", systemImage: "checkmark.circle")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        case .unknown:
+            EmptyView()
+        }
     }
 
     private var colorVisionCaption: String {

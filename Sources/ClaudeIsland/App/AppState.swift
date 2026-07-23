@@ -6,6 +6,9 @@ final class AppState: ObservableObject {
     let settings: AppSettings
 
     @Published var snapshot: UsageSnapshot?
+    // Result of the GitHub release check; drives the About "update available"
+    // row and the small dot on the Settings entry points.
+    @Published var updateStatus: UpdateStatus = .unknown
     @Published var sessions: [SessionInfo] = []
     @Published var selectedSessionIndex: Int = 0 {
         didSet { rescanCapabilities() }
@@ -29,6 +32,7 @@ final class AppState: ObservableObject {
     @Published private(set) var completionPulseCount = 0
 
     private let engine = UsageEngine()
+    private let updateChecker = UpdateChecker()
     private let monitor = SessionMonitor()
     private let scanner = CapabilityScanner()
     private var refreshTask: Task<Void, Never>?
@@ -74,6 +78,9 @@ final class AppState: ObservableObject {
     // Long form for tooltips and accessibility.
     var percentDescription: String { summary.accessibilityDescription }
 
+    // A newer GitHub release exists — flags the About row and the Settings dot.
+    var hasUpdate: Bool { updateStatus.release != nil }
+
     var sessionCountLine: String {
         switch sessions.count {
         case 0: return "No active Claude Code sessions"
@@ -112,6 +119,15 @@ final class AppState: ObservableObject {
                     self.accountAccessAuthorized = true
                     await self.refresh()
                 }
+            }
+        }
+        // Update check: a real GitHub release lookup once per launch (the
+        // checker caches definitive answers for 6h). Off when the user disables it.
+        if settings.checkForUpdates {
+            Task { [weak self] in
+                guard let self else { return }
+                let status = await self.updateChecker.check(currentVersion: AppInfo.version)
+                self.updateStatus = status
             }
         }
         if DebugFlags.simulatePulse {

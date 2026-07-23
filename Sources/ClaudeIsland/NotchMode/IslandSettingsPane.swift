@@ -49,14 +49,21 @@ struct IslandSettingsPane: View {
                 Button {
                     section = candidate
                 } label: {
-                    Text(candidate.rawValue)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(section == candidate ? .white : .gray)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(section == candidate ? Color.claudeOrange : Color.clear))
-                        .contentShape(Capsule())
+                    HStack(spacing: 5) {
+                        Text(candidate.rawValue)
+                            .font(.system(size: 12, weight: .semibold))
+                        if candidate == .about, appState.hasUpdate {
+                            Circle()
+                                .fill(section == candidate ? Color.white : Color.updateAccent)
+                                .frame(width: 7, height: 7)
+                        }
+                    }
+                    .foregroundColor(section == candidate ? .white : .gray)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(section == candidate ? Color.claudeOrange : Color.clear))
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
             }

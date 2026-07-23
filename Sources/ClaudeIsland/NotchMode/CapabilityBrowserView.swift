@@ -133,7 +133,12 @@ struct CapabilityBrowserView: View {
             }
             // Without these, notch mode would be a one-way door: the settings
             // popover only exists in pill mode.
-            IslandActionButton("Settings") { uiModel.showingSettings = true }
+            HStack(spacing: 5) {
+                IslandActionButton("Settings") { uiModel.showingSettings = true }
+                if appState.hasUpdate {
+                    Circle().fill(Color.updateAccent).frame(width: 7, height: 7)
+                }
+            }
             IslandActionButton("Pill mode") { appState.settings.displayMode = .pill }
             IslandActionButton("Quit") { NSApp.terminate(nil) }
         }

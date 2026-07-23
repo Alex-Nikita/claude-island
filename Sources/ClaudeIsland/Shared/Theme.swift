@@ -6,6 +6,9 @@ extension Color {
     static let claudeOrange = Color(red: 0.85, green: 0.47, blue: 0.34)   // #D97757
     static let claudeRed = Color(red: 0.79, green: 0.23, blue: 0.18)      // low-budget warning
     static let attentionBeige = Color(red: 0.93, green: 0.86, blue: 0.62) // waiting on the user
+    // Reserved for "a new version is available" only — deliberately NOT the
+    // orange usage accent, so the badge never reads as a usage/activity state.
+    static let updateAccent = Color(red: 0.29, green: 0.61, blue: 0.95)   // info blue
 
     // Recurring surface tints on the black island.
     static let islandHairline = Color.white.opacity(0.09)

@@ -14,6 +14,16 @@ struct CollapsedNotchView: View {
                     attention: appState.needsUserAttention
                 )
                 .frame(width: 16, height: 16)
+                if appState.hasUpdate {
+                    // Discreet "update available" badge on the app mark — a
+                    // notch-icon dot, ringed so it reads on any wing state.
+                    Circle()
+                        .fill(Color.updateAccent)
+                        .frame(width: 5, height: 5)
+                        .overlay(Circle().stroke(Color.black, lineWidth: 1))
+                        .offset(x: 7, y: -6)
+                        .help("A new version of Claude Island is available")
+                }
             }
             // The panel's width is computed from this same constant — the
             // wings and the frame must agree.

@@ -20,6 +20,7 @@ final class AppSettings: ObservableObject {
         case customTokenBudget5h, customTokenBudgetWeekly
         case refreshSeconds, weightCacheTokens
         case autoExpandOnPrompt, collapseOnClickAway
+        case checkForUpdates
         case authorizedBuildHash
         // Pre-typed-picker boolean, read once for migration.
         case legacyColorBlindPalette = "colorBlindPalette"
@@ -69,6 +70,9 @@ final class AppSettings: ObservableObject {
     // behavior, so they default on.
     @Published var autoExpandOnPrompt: Bool { didSet { persist(autoExpandOnPrompt, .autoExpandOnPrompt) } }
     @Published var collapseOnClickAway: Bool { didSet { persist(collapseOnClickAway, .collapseOnClickAway) } }
+    // Checks GitHub for a newer release on launch. Sends nothing about the
+    // user — a plain GET to the public releases API — so it defaults on.
+    @Published var checkForUpdates: Bool { didSet { persist(checkForUpdates, .checkForUpdates) } }
     // Code-signature hash of the build the user last granted keychain
     // access on. A matching hash lets the SAME build auto-reconnect at
     // launch via a silent no-UI probe; any rebuild breaks the match and
@@ -123,6 +127,7 @@ final class AppSettings: ObservableObject {
         weightCacheTokens = bool(.weightCacheTokens, true)
         autoExpandOnPrompt = bool(.autoExpandOnPrompt, true)
         collapseOnClickAway = bool(.collapseOnClickAway, true)
+        checkForUpdates = bool(.checkForUpdates, true)
         let storedHash = str(.authorizedBuildHash) ?? ""
         authorizedBuildHash = storedHash.isEmpty ? nil : storedHash
         // Invariant: connected ⟹ a build blessing is recorded. The pair

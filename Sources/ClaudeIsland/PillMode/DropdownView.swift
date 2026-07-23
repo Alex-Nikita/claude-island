@@ -127,6 +127,9 @@ struct DropdownView: View {
             HStack(spacing: 6) {
                 Text(section.rawValue)
                     .font(.callout)
+                if section == .about, appState.hasUpdate {
+                    Circle().fill(Color.updateAccent).frame(width: 7, height: 7)
+                }
                 Spacer()
                 Text(sectionDetail(section))
                     .font(.caption)
