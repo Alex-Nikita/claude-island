@@ -31,9 +31,15 @@ final class UsageEngine {
                 fetchError = (error as? LocalizedError)?.errorDescription
                     ?? error.localizedDescription
             }
-            return localSnapshot(query: query,
-                                 sourcePrefix: "Official API unavailable — ",
-                                 fetchError: fetchError)
+            // Claude-account mode with no official data to show (paused / not
+            // authorized this launch / endpoint error): show "–", never a
+            // token estimate the user never chose. Reconnect lives in Settings,
+            // and fetchError still travels through for the Settings diagnostic.
+            var fallback = localSnapshot(query: query,
+                                         sourcePrefix: "Official API unavailable — ",
+                                         fetchError: fetchError)
+            fallback.isUnconfigured = true
+            return fallback
         case .tokenCounts, .costEstimate:
             var snapshot = localSnapshot(query: query, sourcePrefix: "")
             // Detected mode with no connected account is steered to token

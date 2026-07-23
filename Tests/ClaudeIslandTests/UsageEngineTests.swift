@@ -203,6 +203,15 @@ final class UsageEngineTests: XCTestCase {
         XCTAssertFalse(snap.isUnconfigured)
     }
 
+    func testOfficialAPIFallbackShowsDashWhenUnavailable() async throws {
+        try writeUsageTranscript()
+        // Claude-account mode but the fetcher isn't armed → fetch throws (before
+        // any keychain read) → the fallback must be flagged unconfigured so the
+        // UI shows "–", never the token estimate the user never chose.
+        let snap = await engine.computeSnapshot(query: query(source: .officialAPI, mode: .detected))
+        XCTAssertTrue(snap.isUnconfigured)
+    }
+
     func testMonthlyWindowSnapshot() async throws {
         try writeUsageTranscript()
         let snap = await engine.computeSnapshot(
