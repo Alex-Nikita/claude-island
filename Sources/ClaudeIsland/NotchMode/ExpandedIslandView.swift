@@ -155,7 +155,9 @@ struct ExpandedIslandView: View {
 
     @ViewBuilder
     private var resetCaption: some View {
-        if let snapshot = appState.snapshot {
+        // No window/reset line when there's no real basis for the number
+        // (unconfigured "–") — "5-hour (rolling)" next to a dash is meaningless.
+        if let snapshot = appState.snapshot, !snapshot.isUnconfigured {
             VStack(alignment: .leading, spacing: 1) {
                 Text(snapshot.windowLabel)
                     .font(.system(size: 9, weight: .medium))
