@@ -151,6 +151,17 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(q.mode, .detected)
     }
 
+    func testOfficialAPISourceMigratesToTokenCounts() {
+        // A persisted Custom "Official API" selection from before the source
+        // list dropped it must load as a valid local source (the live path now
+        // lives only in Claude-account mode), not leave the radio group blank.
+        defaults.set("officialAPI", forKey: "claudeIsland.source")
+        let s = fresh()
+        XCTAssertEqual(s.source, .tokenCounts)
+        XCTAssertEqual(defaults.string(forKey: "claudeIsland.source"), "tokenCounts",
+                       "migration is written back, not just masked in memory")
+    }
+
     func testUsageBasedForcesCostEstimateAndMonthly() {
         let s = fresh()
         s.mode = .custom

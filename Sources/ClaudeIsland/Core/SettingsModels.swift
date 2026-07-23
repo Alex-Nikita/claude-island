@@ -5,9 +5,10 @@ enum DisplayMode: String, Codable, CaseIterable {
     case notch
 }
 
-// Detected = zero-config: plan and limits read from the logged-in Claude
-// Code install (keychain credential + usage endpoint). Custom = the manual
-// source/window/budget controls.
+// .detected (shown as "Claude account") = zero-config: plan and limits read
+// from the logged-in Claude Code install (keychain credential + usage
+// endpoint) — the ONLY mode that connects. Custom = a manual local estimate
+// with your own source/window/budget; it never touches the keychain.
 enum SettingsMode: String, Codable, CaseIterable, Identifiable {
     case detected
     case custom
@@ -16,7 +17,9 @@ enum SettingsMode: String, Codable, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .detected: return "Detected"
+        // The raw case stays `detected` for stored-defaults compatibility;
+        // the label says what it actually is — your connected Claude account.
+        case .detected: return "Claude account"
         case .custom: return "Custom"
         }
     }

@@ -135,6 +135,14 @@ final class AppSettings: ObservableObject {
             connectAccount = false
             persist(false, .connectAccount)
         }
+        // The official/keychain path now lives solely in "Claude account"
+        // mode; Official API is no longer a selectable Custom source. Migrate a
+        // persisted officialAPI selection to the local token estimate so the
+        // Custom source picker always has a valid, visible radio selection.
+        if source == .officialAPI {
+            source = .tokenCounts
+            persist(source.rawValue, .source)
+        }
     }
 
     private func persist(_ value: Any, _ key: Key) {

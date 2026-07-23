@@ -409,27 +409,17 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var subscriptionSection: some View {
+        // Official API is intentionally absent here: the live/keychain path
+        // lives ONLY in "Claude account" mode, so Custom is purely a local
+        // estimate and can never raise a second connect prompt.
         Picker("Source", selection: $settings.source) {
-            ForEach(UsageSource.allCases) { source in
+            ForEach(UsageSource.allCases.filter { $0 != .officialAPI }) { source in
                 Text(source.title)
                     .help(source.help)
                     .tag(source)
             }
         }
         .pickerStyle(.radioGroup)
-        // Actively picking Official API is itself the consent gesture that
-        // arms this run's keychain gate.
-        .onChange(of: settings.source) { _, newSource in
-            if newSource == .officialAPI { appState.authorizeAccountAccess() }
-        }
-        // Persisted Official API selection from an earlier run: unarmed
-        // until asked, exactly like the Detected-mode connect flow.
-        if settings.source == .officialAPI, !appState.accountAccessAuthorized {
-            Button("Load real limits…") { appState.authorizeAccountAccess() }
-            Text("Reads the Claude Code keychain sign-in — asked only when you press this, never at launch.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
         Picker("Window", selection: $settings.window) {
             ForEach(UsageWindow.subscriptionWindows) { window in
                 Text(window.title).tag(window)
