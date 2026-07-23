@@ -12,6 +12,7 @@ struct UsageSummary {
     /// The number shown everywhere compact (pill, notch wing, corners).
     var compactText: String {
         guard let snapshot else { return "–" }
+        if snapshot.isUnconfigured { return "–" }
         switch unit {
         case .percent:
             if snapshot.isUnlimited { return "∞" }
@@ -31,6 +32,9 @@ struct UsageSummary {
     /// usage used (Weekly · Fable)" or "$22.66 of your budget left".
     var accessibilityDescription: String {
         guard let snapshot else { return "No usage data yet" }
+        if snapshot.isUnconfigured {
+            return "Usage unknown — connect your Claude account or choose a Custom plan to set a budget"
+        }
         if snapshot.isUnlimited, unit == .percent {
             return "No usage caps on this account"
         }
@@ -54,6 +58,7 @@ struct UsageSummary {
     /// both Display choices and the unlimited state.
     var headline: (number: String, suffix: String) {
         guard let snapshot else { return ("–", "") }
+        if snapshot.isUnconfigured { return ("–", "") }
         if snapshot.isUnlimited {
             if unit == .dollars, let used = snapshot.dollarsUsed {
                 return (Format.compactDollars(used), "spent · unlimited")
@@ -65,20 +70,23 @@ struct UsageSummary {
 
     /// "12.3M wtd of 300M tok" — or just the spend line when unlimited.
     var usedOfBudgetLine: String? {
-        guard let snapshot else { return nil }
+        guard let snapshot, !snapshot.isUnconfigured else { return nil }
         return snapshot.isUnlimited
             ? snapshot.usedDisplay
             : "\(snapshot.usedDisplay) of \(snapshot.budgetDisplay)"
     }
 
-    /// "Weekly (rolling) · Cached usage (tokens)".
+    /// "Weekly (rolling) · Cached usage (tokens)" — or a setup hint when there
+    /// is no connected account and no Custom plan to give the number meaning.
     var metaLine: String? {
-        snapshot.map { "\($0.windowLabel) · \($0.sourceLabel)" }
+        guard let snapshot else { return nil }
+        if snapshot.isUnconfigured { return "Connect your account or pick a Custom plan" }
+        return "\(snapshot.windowLabel) · \(snapshot.sourceLabel)"
     }
 
     /// Progress-bar fill (share of budget used); nil hides the bar.
     var usedFraction: Double? {
-        guard let snapshot, !snapshot.isUnlimited else { return nil }
+        guard let snapshot, !snapshot.isUnlimited, !snapshot.isUnconfigured else { return nil }
         return min(max(1 - snapshot.percentLeft / 100, 0), 1)
     }
 

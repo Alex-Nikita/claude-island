@@ -188,6 +188,21 @@ final class UsageEngineTests: XCTestCase {
         XCTAssertEqual(snap.dollarsUsed ?? 0, 15, accuracy: 0.01)
     }
 
+    func testDetectedWithoutAccountIsUnconfigured() async throws {
+        try writeUsageTranscript()
+        // Detected mode steered to token counts (the no-account default) budgets
+        // against a guess — flagged unconfigured so the UI shows "–".
+        let snap = await engine.computeSnapshot(query: query(source: .tokenCounts, mode: .detected))
+        XCTAssertTrue(snap.isUnconfigured)
+    }
+
+    func testCustomTokenCountsIsConfigured() async throws {
+        try writeUsageTranscript()
+        // Custom mode chose token counts on purpose — a real reading, not "–".
+        let snap = await engine.computeSnapshot(query: query(source: .tokenCounts, mode: .custom))
+        XCTAssertFalse(snap.isUnconfigured)
+    }
+
     func testMonthlyWindowSnapshot() async throws {
         try writeUsageTranscript()
         let snap = await engine.computeSnapshot(

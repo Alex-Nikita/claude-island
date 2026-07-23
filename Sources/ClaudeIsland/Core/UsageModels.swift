@@ -55,6 +55,10 @@ struct UsageSnapshot: Equatable {
     var officialLimits: [OfficialLimit] = []
     // Endpoint confirmed the account has no usage caps — display ∞, not %.
     var isUnlimited: Bool = false
+    // No connected account AND no Custom plan chosen: the percentage would be
+    // invented from a default budget the user never set, so show "–" instead
+    // of a number that looks earned. Also suppresses the low-budget alarm color.
+    var isUnconfigured: Bool = false
     // Money view of the same window: native credit figures when the account
     // has them, local cost estimates otherwise. Budget nil = no dollar cap.
     var dollarsUsed: Double?

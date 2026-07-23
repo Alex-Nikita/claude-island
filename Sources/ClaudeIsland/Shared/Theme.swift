@@ -30,7 +30,7 @@ extension SessionInfo {
 }
 
 extension UsageSnapshot {
-    var isLowBudget: Bool { percentLeft < Thresholds.lowBudgetPercentLeft }
+    var isLowBudget: Bool { !isUnconfigured && percentLeft < Thresholds.lowBudgetPercentLeft }
 }
 
 extension ContextBreakdown {

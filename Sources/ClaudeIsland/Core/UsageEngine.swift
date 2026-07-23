@@ -35,7 +35,14 @@ final class UsageEngine {
                                  sourcePrefix: "Official API unavailable — ",
                                  fetchError: fetchError)
         case .tokenCounts, .costEstimate:
-            return localSnapshot(query: query, sourcePrefix: "")
+            var snapshot = localSnapshot(query: query, sourcePrefix: "")
+            // Detected mode with no connected account is steered to token
+            // counts against a DEFAULT budget the user never chose. Flag that
+            // so the UI shows "–" rather than a percentage that looks earned.
+            // (Custom mode picked token counts on purpose; a connected account
+            // never lands here — both keep their real number.)
+            snapshot.isUnconfigured = query.mode == .detected && query.source == .tokenCounts
+            return snapshot
         }
     }
 

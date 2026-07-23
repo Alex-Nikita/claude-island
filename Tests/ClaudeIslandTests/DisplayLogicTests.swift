@@ -22,6 +22,7 @@ final class DisplayLogicTests: XCTestCase {
     private func snapshot(
         percentLeft: Double = 63,
         unlimited: Bool = false,
+        unconfigured: Bool = false,
         dollarsUsed: Double? = nil,
         dollarsBudget: Double? = nil
     ) -> UsageSnapshot {
@@ -29,6 +30,7 @@ final class DisplayLogicTests: XCTestCase {
             percentLeft: percentLeft, usedDisplay: "u", budgetDisplay: "b",
             windowLabel: "Weekly · Fable", sourceLabel: "s", resetsAt: nil,
             updatedAt: Date(), officialLimits: [], isUnlimited: unlimited,
+            isUnconfigured: unconfigured,
             dollarsUsed: dollarsUsed, dollarsBudget: dollarsBudget
         )
     }
@@ -45,6 +47,26 @@ final class DisplayLogicTests: XCTestCase {
 
     func testNoSnapshotShowsDash() {
         XCTAssertEqual(state.percentLeftText, "–")
+    }
+
+    // No connected account and no Custom plan: the percentage would be invented
+    // from a default budget, so every reading shows "–" and the alarm color is
+    // suppressed even at a low fabricated percent.
+    func testUnconfiguredShowsDashNotAPercent() {
+        state.snapshot = snapshot(percentLeft: 4, unconfigured: true)
+        XCTAssertEqual(state.percentLeftText, "–")
+        XCTAssertEqual(state.summary.headline.number, "–")
+        XCTAssertEqual(state.summary.headline.suffix, "")
+        XCTAssertNil(state.summary.usedFraction, "no progress bar without a real budget")
+        XCTAssertFalse(state.snapshot!.isLowBudget, "a meaningless 4% must not flash the alarm color")
+        XCTAssertNil(state.summary.usedOfBudgetLine)
+        XCTAssertTrue(state.percentDescription.lowercased().contains("connect"))
+    }
+
+    func testConfiguredLowBudgetStillAlarms() {
+        state.snapshot = snapshot(percentLeft: 4, unconfigured: false)
+        XCTAssertEqual(state.percentLeftText, "4%")
+        XCTAssertTrue(state.snapshot!.isLowBudget)
     }
 
     func testUnlimitedShowsInfinityInPercentMode() {
