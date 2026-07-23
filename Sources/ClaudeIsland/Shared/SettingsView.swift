@@ -77,19 +77,20 @@ struct SettingsView: View {
                 HStack(spacing: 10) {
                     ClaudeLogo()
                         .frame(width: 30, height: 30)
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(AppInfo.name)
                             .font(.headline)
                         Text("Version \(AppInfo.version)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        updateStatusLine
                     }
                 }
                 updateRow
+                Divider()
                 Text("A menu-bar / notch meter for your Claude usage, sessions, and capabilities.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Divider()
                 if let profile = URL(string: AppInfo.gitHubProfileURL) {
                     HStack(spacing: 4) {
                         Text("Made by \(AppInfo.author)")
@@ -225,24 +226,37 @@ struct SettingsView: View {
             .foregroundStyle(.secondary)
     }
 
-    // About-page update indicator: an accented card with the changelog and a
-    // download link when a newer release exists, a quiet "latest" line
-    // otherwise, and nothing at all when the check hasn't landed (or is off).
+    // "✓ Up to date" shown under the version when current; nothing while the
+    // check is pending/off (a pending update surfaces in the card below).
+    @ViewBuilder
+    private var updateStatusLine: some View {
+        if case .upToDate = appState.updateStatus {
+            Label("Up to date", systemImage: "checkmark.circle.fill")
+                .labelStyle(.titleAndIcon)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // The prominent update card — only when a newer release exists. The
+    // up-to-date state lives inline on the version line above.
     @ViewBuilder
     private var updateRow: some View {
-        switch appState.updateStatus {
-        case .available(let info):
-            VStack(alignment: .leading, spacing: 5) {
+        if case .available(let info) = appState.updateStatus {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.down.circle.fill")
                         .foregroundStyle(Color.updateAccent)
-                    Text("Update available — \(info.version)")
+                    Text("Update available")
                         .font(.caption)
                         .fontWeight(.semibold)
+                    Text(info.version)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
                     Spacer()
                     if let url = URL(string: info.url) {
                         Link("Download", destination: url)
-                            .font(.caption)
+                            .font(.caption.weight(.medium))
                     }
                 }
                 DisclosureGroup("What's changed") {
@@ -257,14 +271,8 @@ struct SettingsView: View {
                 }
                 .font(.caption)
             }
-            .padding(8)
+            .padding(10)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.updateAccent.opacity(0.12)))
-        case .upToDate:
-            Label("You're on the latest version", systemImage: "checkmark.circle")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        case .unknown:
-            EmptyView()
         }
     }
 
