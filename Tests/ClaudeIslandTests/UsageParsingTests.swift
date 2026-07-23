@@ -33,6 +33,21 @@ final class UsageParsingTests: XCTestCase {
         XCTAssertTrue(first?.allSatisfy(\.isHexDigit) ?? false)
     }
 
+    // Retry-After drives the 429 backoff. Delta-seconds and HTTP-date forms
+    // both parse; junk falls through to nil (the fixed backoff covers it); a
+    // wild value is clamped so a hostile header can't wedge the source off.
+    func testRetryAfterParsing() {
+        XCTAssertEqual(OAuthUsageFetcher.retryAfterSeconds("120"), 120)
+        XCTAssertEqual(OAuthUsageFetcher.retryAfterSeconds("  0 "), 0)
+        XCTAssertEqual(OAuthUsageFetcher.retryAfterSeconds("-5"), 0, "negative clamps up to 0")
+        XCTAssertEqual(OAuthUsageFetcher.retryAfterSeconds("999999"), 3600, "clamped to the 1h ceiling")
+        XCTAssertNil(OAuthUsageFetcher.retryAfterSeconds("soon"))
+        XCTAssertNil(OAuthUsageFetcher.retryAfterSeconds(""))
+        // A well-formed HTTP date in the past parses (proving date handling)
+        // and clamps to 0 rather than returning nil.
+        XCTAssertEqual(OAuthUsageFetcher.retryAfterSeconds("Wed, 21 Oct 2015 07:28:00 GMT"), 0)
+    }
+
     func testPercentWindowsAndLimits() throws {
         let usage = try parse("""
         {"five_hour":{"utilization":8.0,"resets_at":"2026-07-21T21:09:59.998869+00:00"},

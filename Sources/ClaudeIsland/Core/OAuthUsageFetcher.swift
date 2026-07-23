@@ -47,9 +47,11 @@ actor OAuthUsageFetcher {
     }
 
     // A cached token is trusted at most this long, regardless of its own
-    // expiry, so a revoked credential can't be reused for hours.
+    // expiry, so a revoked credential can't be reused for hours. A 401/403
+    // (see fetch()) drops it even sooner — the moment the server rejects it.
     private static let tokenCacheCeiling: TimeInterval = 30 * 60
-    // Refresh slightly before the credential's real expiry.
+    // Stop trusting the cached token slightly before its real expiry, so the
+    // next read picks up Claude Code's already-refreshed replacement.
     private static let tokenExpirySlack: TimeInterval = 60
     // After a failed keychain read, don't re-prompt on every refresh tick.
     private static let failureCooldownInterval: TimeInterval = 5 * 60
@@ -59,6 +61,7 @@ actor OAuthUsageFetcher {
         case keychainStatus(OSStatus)
         case credentialsUnreadable
         case tokenExpired
+        case rateLimited(retryAt: Date?)
         case httpStatus(Int)
         case unrecognizedResponse
 
@@ -72,6 +75,8 @@ actor OAuthUsageFetcher {
                 return "Claude Code keychain credentials were not in the expected JSON shape."
             case .tokenExpired:
                 return "The Claude Code OAuth token is expired."
+            case .rateLimited:
+                return "The usage endpoint is rate-limiting requests (HTTP 429); showing the last known figures until it recovers."
             case .httpStatus(let code):
                 return "The usage endpoint returned HTTP \(code)."
             case .unrecognizedResponse:
@@ -92,17 +97,28 @@ actor OAuthUsageFetcher {
         return formatter
     }()
 
-    // Every SecItemCopyMatching can raise a user-facing keychain prompt (the
-    // app is ad-hoc signed, so approvals don't persist across rebuilds).
-    // Cache the token and cool down after failures so a denied or expired
-    // credential doesn't re-prompt on every refresh tick.
+    // A keychain read raises the password dialog ONLY when it was triggered by
+    // an explicit gesture this run (see allowInteractiveReadOnce); automatic
+    // refreshes read with UI forbidden. The app is ad-hoc signed, so an
+    // "Always Allow" grant may not persist — caching the token and cooling
+    // down after failures keeps a lost grant from silently hammering the
+    // keychain, and reading UI-forbidden keeps it from ambushing an idle user.
     private var cachedToken: (token: String, validUntil: Date)?
     private var failureCooldown: (error: FetchError, until: Date)?
     private var cachedAccount: DetectedAccount?
-    // The usage endpoint rate-limits non-Claude-Code callers aggressively;
-    // Claude Code itself caches for an hour. Don't hit it on every 20s poll.
+    // The usage endpoint rate-limits callers aggressively — Claude Code itself
+    // caches for about an hour. A 60s cache turned a 2-minute poll into ~30
+    // hits/hour, which earns HTTP 429s (worse when several devices share one
+    // account). Five minutes keeps a menu-bar meter fresh enough while cutting
+    // endpoint load ~5x.
     private var cachedUsage: (usage: OfficialUsage, fetchedAt: Date)?
-    private let usageCacheSeconds: TimeInterval = 60
+    private let usageCacheSeconds: TimeInterval = 5 * 60
+    // After an HTTP 429, don't touch the endpoint again until this passes
+    // (honoring Retry-After when the server sends one, else a fixed backoff).
+    // The last good usage keeps showing meanwhile, so a transient limit never
+    // blanks the official number or deepens the rate limit with retries.
+    private var rateLimitedUntil: Date?
+    private static let rateLimitBackoff: TimeInterval = 15 * 60
 
     // The keychain is touched only after an explicit user action THIS RUN
     // (Connect button, "Load real limits", or actively selecting the
@@ -111,8 +127,18 @@ actor OAuthUsageFetcher {
     // Not persisted: a restart always starts unarmed.
     private var sessionAuthorized = false
 
+    // Set by an explicit user gesture (authorize()) and consumed by the next
+    // token read: the single read permitted to surface the keychain dialog.
+    // Automatic background refreshes always read with UI forbidden.
+    private var allowInteractiveReadOnce = false
+
     func authorize() {
         sessionAuthorized = true
+        // A deliberate gesture: allow exactly one interactive keychain read,
+        // and clear any failure cooldown a prior silent read left behind so
+        // the deliberate read isn't swallowed by it.
+        allowInteractiveReadOnce = true
+        failureCooldown = nil
     }
 
     /// Arms the session ONLY if the credential is readable right now with
@@ -170,6 +196,13 @@ actor OAuthUsageFetcher {
         if let cached = cachedUsage, Date().timeIntervalSince(cached.fetchedAt) < usageCacheSeconds {
             return cached.usage
         }
+        // Under a 429 backoff, keep serving the last good usage rather than
+        // hammering the endpoint (which only deepens the limit) or blanking the
+        // official number over a transient rate limit.
+        if let until = rateLimitedUntil, until > Date() {
+            if let cached = cachedUsage { return cached.usage }
+            throw FetchError.rateLimited(retryAt: until)
+        }
         let token = try cachedOrFreshAccessToken()
         guard let url = URL(string: API.usageEndpoint) else {
             throw FetchError.unrecognizedResponse
@@ -182,18 +215,62 @@ actor OAuthUsageFetcher {
         request.timeoutInterval = API.requestTimeout
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            throw FetchError.httpStatus(http.statusCode)
+        if let http = response as? HTTPURLResponse {
+            switch http.statusCode {
+            case 200...299:
+                break
+            case 429:
+                let retryAfter = http.value(forHTTPHeaderField: "Retry-After")
+                    .flatMap(Self.retryAfterSeconds)
+                let until = Date().addingTimeInterval(retryAfter ?? Self.rateLimitBackoff)
+                rateLimitedUntil = until
+                if let cached = cachedUsage { return cached.usage }
+                throw FetchError.rateLimited(retryAt: until)
+            case 401, 403:
+                // The token the keychain handed us is no longer accepted —
+                // most likely Claude Code rotated it in place. Drop our cached
+                // copy so the next refresh re-reads the keychain (silently,
+                // UI-forbidden) and picks up the fresh credential.
+                cachedToken = nil
+                throw FetchError.httpStatus(http.statusCode)
+            default:
+                throw FetchError.httpStatus(http.statusCode)
+            }
         }
         let usage = try Self.parseUsage(data)
         cachedUsage = (usage, Date())
+        rateLimitedUntil = nil
         return usage
+    }
+
+    // Retry-After is either delta-seconds or an HTTP date; parse both and
+    // ignore anything unrecognized (the fixed backoff covers that). Clamped
+    // so a bogus far-future value can't wedge the official source off for good.
+    static func retryAfterSeconds(_ header: String) -> TimeInterval? {
+        let trimmed = header.trimmingCharacters(in: .whitespaces)
+        let ceiling: TimeInterval = 60 * 60
+        if let seconds = TimeInterval(trimmed) {
+            return min(max(0, seconds), ceiling)
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+        if let date = formatter.date(from: trimmed) {
+            return min(max(0, date.timeIntervalSinceNow), ceiling)
+        }
+        return nil
     }
 
     private func cachedOrFreshAccessToken() throws -> String {
         // The gate sits in front of EVERY keychain path (fetch and account
         // detection both come through here).
         guard sessionAuthorized else { throw FetchError.notConnected }
+        // Consume the one-shot interactive grant regardless of whether a read
+        // actually happens below, so it can never leak onto a later automatic
+        // refresh and reopen the dialog the user never asked for.
+        let interactive = allowInteractiveReadOnce
+        allowInteractiveReadOnce = false
         if let cached = cachedToken, cached.validUntil > Date() {
             return cached.token
         }
@@ -201,7 +278,7 @@ actor OAuthUsageFetcher {
             throw cooldown.error
         }
         do {
-            let (token, expiry) = try readAccessToken()
+            let (token, expiry) = try readAccessToken(interactive: interactive)
             cacheToken(token, expiry: expiry)
             failureCooldown = nil
             return token
@@ -220,7 +297,19 @@ actor OAuthUsageFetcher {
         cachedToken = (token, validUntil)
     }
 
-    private func readAccessToken() throws -> (String, Date?) {
+    // `interactive` gates the ONLY user-facing keychain dialog in the app: it
+    // is true only for a read triggered by an explicit gesture this run.
+    // Automatic refreshes pass false and read with UI forbidden, so a grant
+    // that doesn't persist (ad-hoc build) degrades silently to the local
+    // estimate instead of ambushing an idle user every time the token cache
+    // expires. As with the launch probe, only SecKeychainSetUserInteraction-
+    // Allowed reliably suppresses the dialog for this file-based login-keychain
+    // item (interactionNotAllowed is a no-op there).
+    private func readAccessToken(interactive: Bool) throws -> (String, Date?) {
+        if !interactive {
+            SecKeychainSetUserInteractionAllowed(false)
+        }
+        defer { if !interactive { SecKeychainSetUserInteractionAllowed(true) } }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: API.keychainService,
