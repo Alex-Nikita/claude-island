@@ -151,6 +151,14 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(q.mode, .detected)
     }
 
+    func testClaudeAccountModeLabelAndRawValue() {
+        // The mode shown as "Claude account" is still the .detected case under
+        // the hood — the label changed, the stored rawValue must not, or every
+        // existing user's persisted mode would silently reset.
+        XCTAssertEqual(SettingsMode.detected.title, "Claude account")
+        XCTAssertEqual(SettingsMode.detected.rawValue, "detected")
+    }
+
     func testOfficialAPISourceMigratesToTokenCounts() {
         // A persisted Custom "Official API" selection from before the source
         // list dropped it must load as a valid local source (the live path now

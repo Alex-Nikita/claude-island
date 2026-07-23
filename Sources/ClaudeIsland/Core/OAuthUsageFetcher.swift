@@ -30,6 +30,18 @@ struct OfficialUsage {
     }
 }
 
+// The HTTP round-trip the usage fetch depends on, abstracted so tests can
+// drive 429 / 401 / success without a network. Production uses URLSession.
+protocol UsageTransport: Sendable {
+    func data(for request: URLRequest) async throws -> (Data, URLResponse)
+}
+
+struct LiveUsageTransport: UsageTransport {
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        try await URLSession.shared.data(for: request)
+    }
+}
+
 // An actor: the token/usage caches and failure cooldown are mutable state
 // shared between the snapshot fetch and account detection — actor isolation
 // makes concurrent use safe by construction instead of relying on callers
@@ -44,6 +56,14 @@ actor OAuthUsageFetcher {
         static let userAgent = "claude-code/2.1 (Claude Island)"
         static let keychainService = "Claude Code-credentials"
         static let requestTimeout: TimeInterval = 15
+    }
+
+    // Injected so tests can supply a scripted transport; production defaults
+    // to the live URLSession round-trip.
+    private let transport: UsageTransport
+
+    init(transport: UsageTransport = LiveUsageTransport()) {
+        self.transport = transport
     }
 
     // A cached token is trusted at most this long, regardless of its own
@@ -204,6 +224,14 @@ actor OAuthUsageFetcher {
             throw FetchError.rateLimited(retryAt: until)
         }
         let token = try cachedOrFreshAccessToken()
+        return try await fetchUsage(token: token)
+    }
+
+    // The network round-trip and status handling, split from fetch() so the
+    // 429 / 401 / serve-stale behavior is testable through an injected
+    // transport without touching the keychain. Takes the already-resolved
+    // token; fetch() has already checked the usage cache and rate-limit backoff.
+    func fetchUsage(token: String) async throws -> OfficialUsage {
         guard let url = URL(string: API.usageEndpoint) else {
             throw FetchError.unrecognizedResponse
         }
@@ -214,7 +242,7 @@ actor OAuthUsageFetcher {
         request.setValue(API.userAgent, forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = API.requestTimeout
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await transport.data(for: request)
         if let http = response as? HTTPURLResponse {
             switch http.statusCode {
             case 200...299:
