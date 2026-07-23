@@ -9,6 +9,8 @@ final class AppState: ObservableObject {
     // Result of the GitHub release check; drives the About "update available"
     // row and the small dot on the Settings entry points.
     @Published var updateStatus: UpdateStatus = .unknown
+    // True while a manual "Check now" is in flight, for button feedback.
+    @Published private(set) var isCheckingUpdate = false
     @Published var sessions: [SessionInfo] = []
     @Published var selectedSessionIndex: Int = 0 {
         didSet { rescanCapabilities() }
@@ -37,6 +39,7 @@ final class AppState: ObservableObject {
     private let scanner = CapabilityScanner()
     private var refreshTask: Task<Void, Never>?
     private var sessionPollTask: Task<Void, Never>?
+    private var updateCheckTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
 
     init(settings: AppSettings) {
@@ -121,13 +124,17 @@ final class AppState: ObservableObject {
                 }
             }
         }
-        // Update check: a real GitHub release lookup once per launch (the
-        // checker caches definitive answers for 6h). Off when the user disables it.
-        if settings.checkForUpdates {
-            Task { [weak self] in
-                guard let self else { return }
-                let status = await self.updateChecker.check(currentVersion: AppInfo.version)
-                self.updateStatus = status
+        // Update check: once at launch, then every 6h while running, so a
+        // long-lived menu-bar app notices a release without a restart. The
+        // checker's 6h cache keeps GitHub hits to one per interval; when the
+        // user has it off, the loop skips the network but keeps ticking cheaply.
+        updateCheckTask = Task { [weak self] in
+            while !Task.isCancelled {
+                if let self, self.settings.checkForUpdates {
+                    let status = await self.updateChecker.check(currentVersion: AppInfo.version)
+                    self.updateStatus = status
+                }
+                try? await Task.sleep(nanoseconds: UInt64(6 * 60 * 60) * 1_000_000_000)
             }
         }
         if DebugFlags.simulatePulse {
@@ -166,10 +173,25 @@ final class AppState: ObservableObject {
         refreshTask = nil
         sessionPollTask?.cancel()
         sessionPollTask = nil
+        updateCheckTask?.cancel()
+        updateCheckTask = nil
     }
 
     func refreshNow() {
         Task { await refresh() }
+    }
+
+    /// The About "Check now" button: force a fresh GitHub check that bypasses
+    /// the 6h cache, with a brief in-flight state for the button.
+    func checkForUpdatesNow() {
+        guard !isCheckingUpdate else { return }
+        isCheckingUpdate = true
+        Task { [weak self] in
+            guard let self else { return }
+            let status = await self.updateChecker.forceCheck(currentVersion: AppInfo.version)
+            self.updateStatus = status
+            self.isCheckingUpdate = false
+        }
     }
 
     /// The Connect button: remember the preference AND arm this run.

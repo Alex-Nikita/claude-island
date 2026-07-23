@@ -66,6 +66,11 @@ actor UpdateChecker {
         if let cached, Date().timeIntervalSince(cached.at) < cacheSeconds {
             return cached.status
         }
+        return await forceCheck(currentVersion: currentVersion)
+    }
+
+    // Ignores the cache and always hits GitHub — the manual "Check now" path.
+    func forceCheck(currentVersion: String) async -> UpdateStatus {
         let status = await fetchStatus(currentVersion: currentVersion)
         if case .unknown = status {} else { cached = (status, Date()) }
         return status

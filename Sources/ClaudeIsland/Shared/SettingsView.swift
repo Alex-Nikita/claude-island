@@ -113,9 +113,17 @@ struct SettingsView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Divider()
-                Toggle("Check for updates automatically", isOn: $settings.checkForUpdates)
+                HStack(spacing: 8) {
+                    Toggle("Check for updates automatically", isOn: $settings.checkForUpdates)
+                        .font(.caption)
+                    Spacer()
+                    Button(appState.isCheckingUpdate ? "Checking…" : "Check now") {
+                        appState.checkForUpdatesNow()
+                    }
                     .font(.caption)
-                Text("Checks github.com for new releases on launch — sends nothing about you.")
+                    .disabled(appState.isCheckingUpdate)
+                }
+                Text("Checks github.com for new releases on launch and every few hours — sends nothing about you.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
