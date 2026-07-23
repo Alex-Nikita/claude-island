@@ -22,6 +22,12 @@ final class AppState: ObservableObject {
     // launching must never surprise with a credentials prompt, even when
     // the connect preference is persisted from an earlier run.
     @Published private(set) var accountAccessAuthorized = false
+    // True only while an explicit Connect / Try again attempt is in flight —
+    // including the stretch where the fetch is blocked behind the macOS
+    // keychain password prompt. Distinct from isRefreshing (which also flips
+    // on background polls) so the UI can show "Connecting…" without flickering
+    // it on every periodic refresh.
+    @Published private(set) var isConnecting = false
     // Identity of the running binary — the thing keychain grants bind to.
     let currentBuildHash = BuildIdentity.currentCodeHash()
 
@@ -212,10 +218,12 @@ final class AppState: ObservableObject {
     /// Load real limits, actively picking the Official API source).
     func authorizeAccountAccess() {
         accountAccessAuthorized = true
+        isConnecting = true
         settings.authorizedBuildHash = currentBuildHash
         Task {
             await engine.authorizeAccountAccess()
             await refresh()
+            isConnecting = false
         }
     }
 

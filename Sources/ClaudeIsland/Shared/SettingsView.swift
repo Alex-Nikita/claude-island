@@ -346,8 +346,6 @@ struct SettingsView: View {
                     .font(.callout)
                     .fontWeight(.medium)
                 Spacer()
-                Button("Disconnect") { appState.disconnectAccount() }
-                    .controlSize(.small)
             }
             Button("Connect Claude account…") { appState.authorizeAccountAccess() }
             Text(appState.currentBuildBlessed
@@ -397,6 +395,21 @@ struct SettingsView: View {
                 }
                 .padding(.top, 2)
             }
+        } else if appState.isConnecting {
+            // The keychain read is in flight — usually blocked behind the macOS
+            // password prompt. Show progress, not the failure state, until it
+            // resolves, so "Try again" can't appear before you've authenticated.
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Connecting…")
+                    .font(.callout)
+                    .fontWeight(.medium)
+                Spacer()
+            }
+            Text("Reading your Claude Code sign-in from the keychain. Approve the macOS prompt to continue.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         } else {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -405,9 +418,8 @@ struct SettingsView: View {
                     .font(.callout)
                     .fontWeight(.medium)
                 Spacer()
-                Button("Disconnect") { appState.disconnectAccount() }
-                    .controlSize(.small)
             }
+            Button("Try again") { appState.authorizeAccountAccess() }
             Text("The keychain prompt may have been denied, or Claude Code isn't signed in (run /login). Retrying on each refresh; local estimates are used meanwhile.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
