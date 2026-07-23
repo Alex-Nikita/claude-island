@@ -83,8 +83,9 @@ struct SettingsView: View {
                         Text("Version \(AppInfo.version)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        updateStatusLine
                     }
+                    Spacer()
+                    updateStatusLine
                 }
                 updateRow
                 Divider()
@@ -226,8 +227,9 @@ struct SettingsView: View {
             .foregroundStyle(.secondary)
     }
 
-    // "✓ Up to date" shown under the version when current; nothing while the
-    // check is pending/off (a pending update surfaces in the card below).
+    // "✓ Up to date" pinned to the far right of the header row, vertically
+    // centered against the logo/name/version block; nothing while the check is
+    // pending/off (a pending update surfaces in the card below).
     @ViewBuilder
     private var updateStatusLine: some View {
         if case .upToDate = appState.updateStatus {
