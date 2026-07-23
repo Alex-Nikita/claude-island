@@ -1,0 +1,78 @@
+name: Bug report
+description: Something in Claude Island isn't working right
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The more detail, the faster it gets fixed.
+  - type: input
+    id: version
+    attributes:
+      label: Claude Island version
+      description: Settings → About. e.g. 1.2.2
+      placeholder: "1.2.2"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "e.g. 26.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Display mode
+      options:
+        - Notch (Dynamic Island)
+        - Pill (menu bar)
+        - Monitor
+        - Not sure
+    validations:
+      required: false
+  - type: dropdown
+    id: source
+    attributes:
+      label: Usage source
+      options:
+        - Claude account
+        - Custom
+        - Not sure
+    validations:
+      required: false
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What went wrong, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or logs
+      description: Drag in screenshots. Console.app logs filtered to "Claude Island" help too.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true
+        - label: This is not a security issue (those go to a private advisory — see SECURITY.md).
+          required: true
