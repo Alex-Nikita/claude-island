@@ -27,7 +27,6 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(s.percentDisplay, .left)
         XCTAssertEqual(s.colorVision, .standard)
         XCTAssertTrue(s.hideIslandHooks)
-        XCTAssertEqual(s.accountKind, .subscription)
         XCTAssertNil(s.selectedLimitID)
         XCTAssertTrue(s.autoExpandOnPrompt, "matches the pre-toggle built-in behavior")
         XCTAssertTrue(s.collapseOnClickAway, "matches the pre-toggle built-in behavior")
@@ -38,7 +37,6 @@ final class AppSettingsTests: XCTestCase {
     func testPersistenceRoundTrip() {
         let s = fresh()
         s.mode = .custom
-        s.accountKind = .usageBased
         s.displayUnit = .dollars
         s.percentDisplay = .used
         s.colorVision = .tritanopia
@@ -49,7 +47,6 @@ final class AppSettingsTests: XCTestCase {
 
         let reloaded = fresh()
         XCTAssertEqual(reloaded.mode, .custom)
-        XCTAssertEqual(reloaded.accountKind, .usageBased)
         XCTAssertEqual(reloaded.displayUnit, .dollars)
         XCTAssertEqual(reloaded.percentDisplay, .used)
         XCTAssertEqual(reloaded.colorVision, .tritanopia)
@@ -101,9 +98,14 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(fresh().colorVision, .tritanopia)
     }
 
-    func testRemovedEnterpriseAccountKindFallsBack() {
-        defaults.set("enterprise", forKey: "claudeIsland.accountKind")
-        XCTAssertEqual(fresh().accountKind, .subscription)
+    func testUsageBasedAccountKindMigratesToCostMonthly() {
+        // The old Custom "Usage-based" account kind is gone — it becomes
+        // Measure = Cost over a Monthly window, and the stale key is cleared.
+        defaults.set("usageBased", forKey: "claudeIsland.accountKind")
+        let s = fresh()
+        XCTAssertEqual(s.source, .costEstimate)
+        XCTAssertEqual(s.window, .monthly)
+        XCTAssertNil(defaults.string(forKey: "claudeIsland.accountKind"), "stale key cleared")
     }
 
     // MARK: - Budgets
@@ -170,16 +172,30 @@ final class AppSettingsTests: XCTestCase {
                        "migration is written back, not just masked in memory")
     }
 
-    func testUsageBasedForcesCostEstimateAndMonthly() {
+    func testCustomMonthlyCostQuery() {
         let s = fresh()
         s.mode = .custom
-        s.accountKind = .usageBased
-        s.source = .tokenCounts       // stale selection must not leak through
+        s.source = .costEstimate
+        s.window = .monthly
         s.customCostBudgetMonthly = 900
         let q = s.makeQuery()
         XCTAssertEqual(q.source, .costEstimate)
         XCTAssertEqual(q.window, .monthly)
         XCTAssertEqual(q.costBudget, 900)
+    }
+
+    func testCustomMonthlyTokenQuery() {
+        // Measure now applies to Monthly too — tokens over a calendar month,
+        // which the old account-kind model couldn't express.
+        let s = fresh()
+        s.mode = .custom
+        s.source = .tokenCounts
+        s.window = .monthly
+        s.customTokenBudgetMonthly = 2_000_000_000
+        let q = s.makeQuery()
+        XCTAssertEqual(q.source, .tokenCounts)
+        XCTAssertEqual(q.window, .monthly)
+        XCTAssertEqual(q.tokenBudget, 2_000_000_000)
     }
 
     func testDollarDisplayRequestsDollarStats() {
@@ -188,6 +204,37 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(s.makeQuery().wantDollarStats)
         s.displayUnit = .percent
         XCTAssertFalse(s.makeQuery().wantDollarStats)
+    }
+
+    func testCustomCostMeasureShowsDollarsRegardlessOfToggle() {
+        // In Custom mode the Measure choice drives the unit: picking Cost shows
+        // dollars even when the stored (Detected-only) toggle still says percent.
+        let s = fresh()
+        s.mode = .custom
+        s.displayUnit = .percent
+        s.source = .costEstimate
+        XCTAssertEqual(s.effectiveDisplayUnit, .dollars)
+        XCTAssertTrue(s.makeQuery().wantDollarStats)
+    }
+
+    func testCustomTokenMeasureShowsPercentRegardlessOfToggle() {
+        let s = fresh()
+        s.mode = .custom
+        s.displayUnit = .dollars
+        s.source = .tokenCounts
+        XCTAssertEqual(s.effectiveDisplayUnit, .percent)
+        XCTAssertFalse(s.makeQuery().wantDollarStats)
+    }
+
+    func testDetectedModeHonorsDisplayUnitToggle() {
+        // Detected mode keeps the explicit toggle — both units are valid there,
+        // independent of the source.
+        let s = fresh()
+        s.mode = .detected
+        s.source = .tokenCounts
+        s.displayUnit = .dollars
+        XCTAssertEqual(s.effectiveDisplayUnit, .dollars)
+        XCTAssertTrue(s.makeQuery().wantDollarStats)
     }
 
     func testBudgetClamping() {

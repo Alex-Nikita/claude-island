@@ -137,25 +137,6 @@ enum UsageWindow: String, Codable, CaseIterable, Identifiable {
     static let subscriptionWindows: [UsageWindow] = [.fiveHour, .weekly]
 }
 
-// Custom-mode account shape. Subscription covers Pro/Max/Team AND seat-based
-// Enterprise — all meter the same rolling 5h + weekly percentage windows.
-// Usage-based covers Console/API billing and usage-based Enterprise: no
-// windows at all, spend tracked against a monthly calendar budget (the only
-// cadence Anthropic uses for money).
-enum AccountKind: String, Codable, CaseIterable, Identifiable {
-    case subscription
-    case usageBased
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .subscription: return "Subscription plan"
-        case .usageBased: return "Usage-based / API"
-        }
-    }
-}
-
 enum PlanPreset: String, Codable, CaseIterable, Identifiable {
     case pro
     case max5x

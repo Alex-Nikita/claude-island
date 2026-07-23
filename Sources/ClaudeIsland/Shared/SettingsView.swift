@@ -148,6 +148,8 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                Divider()
+                    .padding(.vertical, 2)
                 if settings.mode == .detected {
                     detectedSection
                 } else {
@@ -163,15 +165,20 @@ struct SettingsView: View {
     private var displayGroup: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 6) {
-                Picker("Unit", selection: $settings.displayUnit) {
-                    ForEach(DisplayUnit.allCases) { unit in
-                        Text(unit.title).tag(unit)
+                // Custom mode derives the unit from the Measure choice (Cost →
+                // dollars, Tokens → percent), so this toggle only appears when
+                // connected to a Claude account, where either unit is valid.
+                if settings.mode == .detected {
+                    Picker("Unit", selection: $settings.displayUnit) {
+                        ForEach(DisplayUnit.allCases) { unit in
+                            Text(unit.title).tag(unit)
+                        }
                     }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
                 Picker("Direction", selection: $settings.percentDisplay) {
                     ForEach(PercentDisplay.allCases) { display in
-                        Text(settings.displayUnit == .dollars
+                        Text(settings.effectiveDisplayUnit == .dollars
                              ? (display == .left ? "$ left" : "$ used")
                              : display.title)
                             .tag(display)
@@ -302,7 +309,7 @@ struct SettingsView: View {
     }
 
     private var displayCaption: String {
-        switch (settings.displayUnit, settings.percentDisplay) {
+        switch (settings.effectiveDisplayUnit, settings.percentDisplay) {
         case (.percent, .left):
             return "The pill and island count down: 63% means 63% of your budget remains."
         case (.percent, .used):
@@ -460,55 +467,71 @@ struct SettingsView: View {
         }
     }
 
+    // Custom = a local estimate from your Claude Code data, no account
+    // connection. A visible plan-type split fronts the Measure × Window model:
+    // Subscription (rolling token limits) vs Enterprise (usage-based monthly $).
     @ViewBuilder
     private var customSection: some View {
-        Picker("Account", selection: $settings.accountKind) {
-            ForEach(AccountKind.allCases) { kind in
-                Text(kind.title).tag(kind)
-            }
+        Picker("Plan", selection: planTypeBinding) {
+            Text("Subscription").tag(PlanType.subscription)
+            Text("Enterprise").tag(PlanType.enterprise)
         }
         .pickerStyle(.segmented)
-        Text(settings.accountKind == .subscription
-             ? "Pro, Max, Team, and seat-based Enterprise — all meter rolling 5-hour and weekly windows."
-             : "Console/API billing or usage-based Enterprise — no usage windows; spend counts against a monthly budget.")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-        if settings.accountKind == .usageBased {
-            usageBasedSection
+
+        if planTypeBinding.wrappedValue == .subscription {
+            subscriptionCustom
         } else {
-            subscriptionSection
+            enterpriseCustom
         }
     }
 
+    private enum PlanType { case subscription, enterprise }
+
+    // The plan type is a friendly view over Measure × Window — no separate
+    // stored setting. Enterprise = Cost over a Monthly window; Subscription =
+    // a rolling window with whatever Measure the user picks.
+    private var planTypeBinding: Binding<PlanType> {
+        Binding(
+            get: { settings.window == .monthly ? .enterprise : .subscription },
+            set: { newValue in
+                switch newValue {
+                case .enterprise:
+                    settings.source = .costEstimate
+                    settings.window = .monthly
+                case .subscription:
+                    if settings.window == .monthly { settings.window = .weekly }
+                }
+            }
+        )
+    }
+
     @ViewBuilder
-    private var subscriptionSection: some View {
-        // Official API is intentionally absent here: the live/keychain path
-        // lives ONLY in "Claude account" mode, so Custom is purely a local
-        // estimate and can never raise a second connect prompt.
-        Picker("Source", selection: $settings.source) {
-            ForEach(UsageSource.allCases.filter { $0 != .officialAPI }) { source in
-                Text(source.title)
-                    .help(source.help)
-                    .tag(source)
+    private var subscriptionCustom: some View {
+        Picker("Tier", selection: $settings.planPreset) {
+            ForEach(PlanPreset.allCases) { preset in
+                Text(preset.title).tag(preset)
             }
         }
-        .pickerStyle(.radioGroup)
+        .pickerStyle(.menu)
+
         Picker("Window", selection: $settings.window) {
             ForEach(UsageWindow.subscriptionWindows) { window in
                 Text(window.title).tag(window)
             }
         }
         .pickerStyle(.segmented)
-        Picker("Plan", selection: $settings.planPreset) {
-            ForEach(PlanPreset.allCases) { preset in
-                Text(preset.title).tag(preset)
-            }
+
+        Picker("Measure by", selection: $settings.source) {
+            Text("Tokens").tag(UsageSource.tokenCounts)
+            Text("Cost ($)").tag(UsageSource.costEstimate)
         }
-        .pickerStyle(.menu)
+        .pickerStyle(.segmented)
+
         if settings.planPreset == .custom {
             customBudgetFields
         }
-        if settings.source != .costEstimate {
+
+        if settings.source == .tokenCounts {
             VStack(alignment: .leading, spacing: 2) {
                 Toggle("Weight cache tokens by price", isOn: $settings.weightCacheTokens)
                     .font(.caption)
@@ -516,31 +539,32 @@ struct SettingsView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+        } else {
+            multiplierRow
         }
-        multiplierRow
-    }
 
-    // Usage-based accounts: Anthropic's usage endpoint returns nothing for
-    // them, so spend is estimated locally from per-model pricing against a
-    // monthly calendar budget (resets on the 1st, like Anthropic's own
-    // billing and spend caps).
-    @ViewBuilder
-    private var usageBasedSection: some View {
-        budgetField("Monthly budget ($)", value: $settings.customCostBudgetMonthly)
-        Text("Estimated locally from your transcripts × per-model pricing; resets with the calendar month. Match it to your Console workspace or per-user spend limit.")
+        Text("Pro / Max — estimated locally from your ~/.claude transcripts against rolling 5-hour and weekly limits. Nothing leaves your Mac.")
             .font(.caption2)
             .foregroundStyle(.secondary)
-        multiplierRow
     }
 
-    // Official API falls back to token counts on failure, so its token budget stays editable.
+    @ViewBuilder
+    private var enterpriseCustom: some View {
+        budgetField("Monthly spend cap ($)", value: $settings.customCostBudgetMonthly)
+        multiplierRow
+        Text("Usage-based billing — estimated spend from your transcripts × per-model pricing, against your monthly cap. Resets each calendar month; nothing leaves your Mac.")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+    }
+
+    // Rolling-window budget fields (shown when Tier = Custom). Monthly is
+    // handled directly by the Enterprise section's spend cap.
     @ViewBuilder
     private var customBudgetFields: some View {
         if settings.source == .costEstimate {
             budgetField("5-hour cost budget ($)", value: $settings.customCostBudget5h)
             budgetField("Weekly cost budget ($)", value: $settings.customCostBudgetWeekly)
-        }
-        if settings.source == .tokenCounts || settings.source == .officialAPI {
+        } else {
             budgetField("5-hour token budget", value: $settings.customTokenBudget5h)
             budgetField("Weekly token budget", value: $settings.customTokenBudgetWeekly)
         }

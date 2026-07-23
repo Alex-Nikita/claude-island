@@ -17,7 +17,7 @@ final class AppSettings: ObservableObject {
         case selectedLimitID, detectedPlanPreset, accountKind, source, window
         case planPreset, costMultiplier
         case customCostBudget5h, customCostBudgetWeekly, customCostBudgetMonthly
-        case customTokenBudget5h, customTokenBudgetWeekly
+        case customTokenBudget5h, customTokenBudgetWeekly, customTokenBudgetMonthly
         case refreshSeconds, weightCacheTokens
         case autoExpandOnPrompt, collapseOnClickAway
         case checkForUpdates
@@ -50,7 +50,8 @@ final class AppSettings: ObservableObject {
     @Published var detectedPlanPreset: PlanPreset? {
         didSet { persist(detectedPlanPreset?.rawValue ?? "", .detectedPlanPreset) }
     }
-    @Published var accountKind: AccountKind { didSet { persist(accountKind.rawValue, .accountKind) } }
+    // Custom mode: "Measure by" — .tokenCounts or .costEstimate. (.officialAPI
+    // is Claude-account-only and never selectable here.)
     @Published var source: UsageSource { didSet { persist(source.rawValue, .source) } }
     @Published var window: UsageWindow { didSet { persist(window.rawValue, .window) } }
     @Published var planPreset: PlanPreset { didSet { persist(planPreset.rawValue, .planPreset) } }
@@ -60,6 +61,7 @@ final class AppSettings: ObservableObject {
     @Published var customCostBudgetMonthly: Double { didSet { persist(customCostBudgetMonthly, .customCostBudgetMonthly) } }
     @Published var customTokenBudget5h: Double { didSet { persist(customTokenBudget5h, .customTokenBudget5h) } }
     @Published var customTokenBudgetWeekly: Double { didSet { persist(customTokenBudgetWeekly, .customTokenBudgetWeekly) } }
+    @Published var customTokenBudgetMonthly: Double { didSet { persist(customTokenBudgetMonthly, .customTokenBudgetMonthly) } }
     @Published var refreshSeconds: Double { didSet { persist(refreshSeconds, .refreshSeconds) } }
     // Cache reads are billed at 0.1x input price; counting them at full weight
     // makes any realistic token budget saturate within minutes of agent use.
@@ -113,7 +115,6 @@ final class AppSettings: ObservableObject {
         let storedLimit = str(.selectedLimitID) ?? ""
         selectedLimitID = storedLimit.isEmpty ? nil : storedLimit
         detectedPlanPreset = str(.detectedPlanPreset).flatMap(PlanPreset.init(rawValue:))
-        accountKind = str(.accountKind).flatMap(AccountKind.init(rawValue:)) ?? .subscription
         source = str(.source).flatMap(UsageSource.init(rawValue:)) ?? .tokenCounts
         window = str(.window).flatMap(UsageWindow.init(rawValue:)) ?? .fiveHour
         planPreset = str(.planPreset).flatMap(PlanPreset.init(rawValue:)) ?? .max5x
@@ -123,6 +124,7 @@ final class AppSettings: ObservableObject {
         customCostBudgetMonthly = num(.customCostBudgetMonthly, 1000)
         customTokenBudget5h = num(.customTokenBudget5h, 50_000_000)
         customTokenBudgetWeekly = num(.customTokenBudgetWeekly, 300_000_000)
+        customTokenBudgetMonthly = num(.customTokenBudgetMonthly, 1_200_000_000)
         refreshSeconds = num(.refreshSeconds, Self.defaultRefreshSeconds)
         weightCacheTokens = bool(.weightCacheTokens, true)
         autoExpandOnPrompt = bool(.autoExpandOnPrompt, true)
@@ -147,6 +149,16 @@ final class AppSettings: ObservableObject {
         if source == .officialAPI {
             source = .tokenCounts
             persist(source.rawValue, .source)
+        }
+        // The old Custom "Usage-based" account kind is now just Measure = Cost
+        // over a Monthly window. Migrate a persisted usage-based selection once,
+        // then drop the stored key.
+        if str(.accountKind) == "usageBased" {
+            source = .costEstimate
+            window = .monthly
+            persist(source.rawValue, .source)
+            persist(window.rawValue, .window)
+            defaults.removeObject(forKey: Self.prefix + Key.accountKind.rawValue)
         }
     }
 
@@ -184,6 +196,7 @@ final class AppSettings: ObservableObject {
     }
 
     func tokenBudget(for window: UsageWindow) -> Double {
+        if window == .monthly { return customTokenBudgetMonthly }
         switch (effectivePlanPreset, window) {
         case (.pro, .fiveHour): return 10_000_000
         case (.pro, _): return 60_000_000
@@ -196,27 +209,32 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// The unit the pill and island actually render in. Detected mode honors
+    /// the explicit Unit toggle. Custom mode derives it from the Measure choice
+    /// — Cost → dollars, Tokens → percent — so there's no separate Percent/
+    /// Dollars toggle to keep in sync (picking "Measure by: Cost" shows dollars).
+    var effectiveDisplayUnit: DisplayUnit {
+        mode == .detected ? displayUnit : (source == .costEstimate ? .dollars : .percent)
+    }
+
     func makeQuery() -> UsageQuery {
-        // Usage-based accounts have no windows: spend is estimated locally
-        // against a monthly calendar budget (the OAuth usage endpoint
-        // returns nothing for them).
-        let usageBased = mode == .custom && accountKind == .usageBased
-        let effectiveWindow = usageBased ? .monthly : window
         // Clamp here rather than fighting the TextFields: a 0 or negative
         // budget/multiplier would pin the pill to 0% or 100%.
         return UsageQuery(
             // Detected mode uses the account endpoint only after the user
-            // explicitly connects; otherwise it runs on local estimates.
+            // explicitly connects; otherwise it runs on local estimates. Custom
+            // mode measures by the user's chosen source (Tokens/Cost) over the
+            // chosen window (5h/weekly/monthly) — no account-kind special-case.
             source: mode == .detected
                 ? (connectAccount ? .officialAPI : .tokenCounts)
-                : (usageBased ? .costEstimate : source),
-            window: effectiveWindow,
+                : source,
+            window: window,
             costMultiplier: max(0.01, costMultiplier),
-            costBudget: max(0.01, costBudget(for: effectiveWindow)),
-            tokenBudget: max(1, tokenBudget(for: effectiveWindow)),
+            costBudget: max(0.01, costBudget(for: window)),
+            tokenBudget: max(1, tokenBudget(for: window)),
             weightCacheTokens: weightCacheTokens,
             mode: mode,
-            wantDollarStats: displayUnit == .dollars,
+            wantDollarStats: effectiveDisplayUnit == .dollars,
             preferredLimitID: selectedLimitID
         )
     }
