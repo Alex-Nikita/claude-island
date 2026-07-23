@@ -5,7 +5,7 @@ import Foundation
 // app's Info.plist, so the About page and Finder can never disagree.
 enum AppInfo {
     static let name = "Claude Island"
-    static let version = "1.2.1"
+    static let version = "1.2.2"
     static let author = "Alex Nikita"
     static let gitHubHandle = "Alex-Nikita"
     static let gitHubProfileURL = "https://github.com/Alex-Nikita"
